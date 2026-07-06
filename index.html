@@ -1,9 +1,11 @@
 
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Sapat Tracker — Daily Calorie Tracker</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -44,7 +46,7 @@
     transition: background 0.15s, color 0.15s;
   }
   header nav button.active, header nav button:hover {
-    background: rgba(59,130,246,0.2);
+    background: rgba(16,185,129,0.25);
     color: #fff;
   }
 
@@ -461,6 +463,10 @@
           <label>Height <span id="unit-h">(cm)</span></label>
           <input type="number" id="p-height" />
         </div>
+        <div class="form-group">
+          <label>Target Weight <span id="unit-tw">(kg)</span></label>
+          <input type="number" id="p-target-weight" placeholder="e.g. 65" />
+        </div>
         <div class="form-group full">
           <label>Activity Level</label>
           <select id="p-activity">
@@ -588,6 +594,36 @@
       </div>
     </div>
 
+    <!-- BMI Card -->
+    <div class="card" id="bmi-card" style="display:none">
+      <h2><span class="icon">⚖️</span> BMI — Body Mass Index</h2>
+      <div style="display:flex;align-items:center;gap:24px;flex-wrap:wrap">
+        <div style="text-align:center;min-width:100px">
+          <div style="font-size:48px;font-weight:800;line-height:1" id="bmi-val">—</div>
+          <div style="font-size:13px;font-weight:700;margin-top:4px" id="bmi-cat">—</div>
+        </div>
+        <div style="flex:1;min-width:200px">
+          <!-- BMI scale bar -->
+          <div style="position:relative;height:12px;border-radius:99px;background:linear-gradient(to right,#3b82f6 0%,#10B981 25%,#d97706 55%,#dc2626 100%);margin-bottom:8px">
+            <div id="bmi-marker" style="position:absolute;top:-4px;width:4px;height:20px;background:#0F2922;border-radius:2px;transform:translateX(-50%);transition:left 0.5s"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:#57606a;font-weight:600">
+            <span>Underweight<br>&lt;18.5</span>
+            <span style="text-align:center">Normal<br>18.5–24.9</span>
+            <span style="text-align:center">Overweight<br>25–29.9</span>
+            <span style="text-align:right">Obese<br>≥30</span>
+          </div>
+          <div id="bmi-note" style="font-size:12px;color:#57606a;margin-top:10px;line-height:1.5"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Daily History Card -->
+    <div class="card" id="history-card" style="display:none">
+      <h2><span class="icon">📆</span> Past Days</h2>
+      <div id="history-body"></div>
+    </div>
+
     <div class="card" id="today-card">
       <h2><span class="icon">📅</span> Today's Progress <span id="today-date" style="font-size:13px;font-weight:400;color:#57606a"></span></h2>
 
@@ -633,6 +669,22 @@
           <div class="macro-bar-track"><div class="macro-bar-fill fill-fat" id="bar-fat" style="width:0%"></div></div>
         </div>
       </div>
+    </div>
+
+    <!-- Weight Tracker Card -->
+    <div class="card" id="weight-card">
+      <h2><span class="icon">📈</span> Weight Tracker</h2>
+      <div style="display:flex;align-items:flex-end;gap:10px;margin-bottom:16px">
+        <div class="form-group" style="margin:0;flex:1">
+          <label id="wt-input-label">Log today's weight (kg)</label>
+          <input type="number" id="wt-input" placeholder="e.g. 72.5" step="0.1" min="20" max="300" />
+        </div>
+        <button class="btn btn-primary" id="btn-log-weight" style="white-space:nowrap">+ Log</button>
+      </div>
+      <div id="wt-chart-wrap" style="display:none">
+        <canvas id="wt-chart" height="180"></canvas>
+      </div>
+      <div id="wt-empty" style="text-align:center;padding:20px;font-size:13px;color:#6b8f82">No weight entries yet — log your first reading above.</div>
     </div>
 
     <div style="display:flex;justify-content:center;gap:12px;flex-wrap:wrap">
@@ -850,9 +902,26 @@
   function save(key, val) { try { localStorage.setItem('ft_' + key, JSON.stringify(val)); } catch(e){} }
   function load(key, def) { try { const v = localStorage.getItem('ft_' + key); return v ? JSON.parse(v) : def; } catch(e){ return def; } }
 
-  // ── Daily reset ────────────────────────────────────────────────────────────
+  // ── Daily reset — archives yesterday before clearing ──────────────────────
   const TODAY = new Date().toISOString().slice(0,10); // "YYYY-MM-DD"
   const lastDate = load('lastDate', null);
+  if (lastDate && lastDate !== TODAY) {
+    // Archive yesterday's log into history (keep last 30 days)
+    const prevLog  = load('foodLog', []);
+    const prevCalc = load('calc', null);
+    if (prevLog.length) {
+      const history = load('dailyHistory', []);
+      history.unshift({
+        date:    lastDate,
+        kcal:    Math.round(prevLog.reduce((s,e) => s + e.cals,    0)),
+        protein: Math.round(prevLog.reduce((s,e) => s + e.protein, 0)),
+        carbs:   Math.round(prevLog.reduce((s,e) => s + e.carbs,   0)),
+        fat:     Math.round(prevLog.reduce((s,e) => s + e.fat,     0)),
+        target:  prevCalc ? prevCalc.target : 0,
+      });
+      save('dailyHistory', history.slice(0, 30));
+    }
+  }
   if (lastDate !== TODAY) {
     save('foodLog', []);
     save('lastDate', TODAY);
@@ -883,25 +952,27 @@
   // ── Profile page ───────────────────────────────────────────────────────────
   document.getElementById('p-unit').addEventListener('change', function() {
     const imp = this.value.startsWith('Imperial');
-    document.getElementById('unit-w').textContent = imp ? '(lb)' : '(kg)';
-    document.getElementById('unit-h').textContent = imp ? '(in)' : '(cm)';
+    document.getElementById('unit-w').textContent  = imp ? '(lb)' : '(kg)';
+    document.getElementById('unit-h').textContent  = imp ? '(in)' : '(cm)';
+    document.getElementById('unit-tw').textContent = imp ? '(lb)' : '(kg)';
   });
 
   document.getElementById('btn-next-goals').addEventListener('click', function() {
     const name     = document.getElementById('p-name').value.trim();
     const age      = parseFloat(document.getElementById('p-age').value);
     const gender   = document.getElementById('p-gender').value;
-    const unit     = document.getElementById('p-unit').value;
-    const weight   = parseFloat(document.getElementById('p-weight').value);
-    const height   = parseFloat(document.getElementById('p-height').value);
-    const activity = document.getElementById('p-activity').value;
+    const unit         = document.getElementById('p-unit').value;
+    const weight       = parseFloat(document.getElementById('p-weight').value);
+    const height       = parseFloat(document.getElementById('p-height').value);
+    const activity     = document.getElementById('p-activity').value;
+    const targetWeight = parseFloat(document.getElementById('p-target-weight').value) || null;
 
     if (!name || !age || gender === 'Select…' || !weight || !height) {
       alert('Please fill in all profile fields before continuing.');
       return;
     }
 
-    profile = { name, age, gender, unit, weight, height, activity };
+    profile = { name, age, gender, unit, weight, height, activity, targetWeight };
     save('profile', profile);
     showPage('goals');
   });
@@ -1024,6 +1095,76 @@
     calc = { bmr: Math.round(bmr), tdee: Math.round(tdee), target: Math.round(target), adj: Math.round(dailyAdj) };
   }
 
+  // ── BMI helper ─────────────────────────────────────────────────────────────
+  function renderBMI() {
+    if (!profile.weight || !profile.height) {
+      document.getElementById('bmi-card').style.display = 'none';
+      return;
+    }
+    let weightKg = profile.weight;
+    let heightCm = profile.height;
+    if ((profile.unit || '').startsWith('Imperial')) {
+      weightKg = profile.weight * 0.453592;
+      heightCm = profile.height * 2.54;
+    }
+    const heightM = heightCm / 100;
+    const bmi = weightKg / (heightM * heightM);
+    const bmiRounded = Math.round(bmi * 10) / 10;
+
+    let cat, color, note;
+    if (bmi < 18.5) {
+      cat = 'Underweight'; color = '#3b82f6';
+      note = 'You may benefit from increasing your calorie intake. Consider consulting a healthcare professional.';
+    } else if (bmi < 25) {
+      cat = 'Normal weight'; color = '#10B981';
+      note = 'Your BMI is in the healthy range. Keep up your balanced diet and active lifestyle!';
+    } else if (bmi < 30) {
+      cat = 'Overweight'; color = '#d97706';
+      note = 'A moderate calorie deficit combined with regular activity can help reach a healthy BMI.';
+    } else {
+      cat = 'Obese'; color = '#dc2626';
+      note = 'Consider speaking with a healthcare professional about a structured weight management plan.';
+    }
+
+    document.getElementById('bmi-card').style.display = '';
+    document.getElementById('bmi-val').textContent = bmiRounded;
+    document.getElementById('bmi-val').style.color = color;
+    document.getElementById('bmi-cat').textContent = cat;
+    document.getElementById('bmi-cat').style.color = color;
+    document.getElementById('bmi-note').textContent = note;
+
+    // Position marker on gradient bar (BMI 15–40 range mapped to 0–100%)
+    const pct = Math.min(Math.max((bmi - 15) / (40 - 15) * 100, 0), 100);
+    document.getElementById('bmi-marker').style.left = pct + '%';
+  }
+
+  // ── Daily History helper ────────────────────────────────────────────────────
+  function renderHistory() {
+    const history = load('dailyHistory', []);
+    const card    = document.getElementById('history-card');
+    const body    = document.getElementById('history-body');
+    if (!history.length) { card.style.display = 'none'; return; }
+    card.style.display = '';
+    const target = calc ? calc.target : 0;
+    body.innerHTML = history.slice(0, 7).map(day => {
+      const pct  = target ? Math.min(Math.round(day.kcal / target * 100), 200) : null;
+      const over = target && day.kcal > target;
+      const barColor = over ? '#dc2626' : '#10B981';
+      const barW = target ? Math.min(day.kcal / target * 100, 100) + '%' : '0%';
+      const dateLabel = new Date(day.date + 'T12:00:00').toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' });
+      return `<div style="margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+          <span style="font-weight:600;color:#0F2922">${dateLabel}</span>
+          <span style="color:${barColor};font-weight:700">${day.kcal.toLocaleString()} kcal${pct !== null ? ' · ' + pct + '%' : ''}</span>
+        </div>
+        <div style="height:8px;background:#e5e7eb;border-radius:99px;overflow:hidden">
+          <div style="height:100%;width:${barW};background:${barColor};border-radius:99px;transition:width 0.4s"></div>
+        </div>
+        <div style="font-size:11px;color:#57606a;margin-top:3px">P: ${day.protein}g &nbsp; C: ${day.carbs}g &nbsp; F: ${day.fat}g</div>
+      </div>`;
+    }).join('');
+  }
+
   // ── Dashboard ──────────────────────────────────────────────────────────────
   function renderDashboard() {
     const alert = document.getElementById('no-profile-alert');
@@ -1041,6 +1182,9 @@
       const adjSign = calc.adj >= 0 ? '+' : '';
       document.getElementById('res-adj').textContent    = adjSign + calc.adj.toLocaleString();
     }
+
+    renderBMI();
+    renderHistory();
 
     // Today progress
     const now = new Date();
@@ -1087,7 +1231,129 @@
       document.getElementById('bar-carbs').style.width   = carbG ? Math.min(logCarb/carbG*100,100)+'%' : '0%';
       document.getElementById('bar-fat').style.width     = fatG  ? Math.min(logFat/fatG*100,100)+'%'  : '0%';
     }
+    renderWeightChart();
   }
+
+  // ── Weight Tracker ──────────────────────────────────────────────────────────
+  let weightChart = null;
+
+  function renderWeightChart() {
+    const weightLog = load('weightLog', []); // [{ date:'YYYY-MM-DD', val:72.5 }, ...]
+    const imp       = (profile.unit || '').startsWith('Imperial');
+    const unit      = imp ? 'lb' : 'kg';
+
+    // Update input label
+    document.getElementById('wt-input-label').textContent = `Log today's weight (${unit})`;
+
+    const empty    = document.getElementById('wt-empty');
+    const chartWrap = document.getElementById('wt-chart-wrap');
+
+    if (!weightLog.length) {
+      empty.style.display    = '';
+      chartWrap.style.display = 'none';
+      return;
+    }
+    empty.style.display    = 'none';
+    chartWrap.style.display = '';
+
+    // Keep last 30 entries
+    const recent = weightLog.slice(-30);
+    const labels = recent.map(e => {
+      const d = new Date(e.date + 'T12:00:00');
+      return d.toLocaleDateString('en-US', { month:'short', day:'numeric' });
+    });
+    const vals = recent.map(e => e.val);
+
+    // Target weight line (flat)
+    let targetVal = null;
+    if (profile.targetWeight) {
+      targetVal = profile.targetWeight;
+      if (imp) targetVal = Math.round(targetVal * 2.20462 * 10) / 10;
+    }
+    const targetData = targetVal ? recent.map(() => targetVal) : null;
+
+    const ctx = document.getElementById('wt-chart').getContext('2d');
+    if (weightChart) weightChart.destroy();
+
+    const datasets = [
+      {
+        label: `Weight (${unit})`,
+        data: vals,
+        borderColor: '#10B981',
+        backgroundColor: 'rgba(16,185,129,0.1)',
+        borderWidth: 2.5,
+        pointRadius: 4,
+        pointBackgroundColor: '#10B981',
+        tension: 0.35,
+        fill: true,
+      }
+    ];
+
+    if (targetData) {
+      datasets.push({
+        label: `Target (${targetVal} ${unit})`,
+        data: targetData,
+        borderColor: '#3b82f6',
+        borderWidth: 2,
+        borderDash: [6, 4],
+        pointRadius: 0,
+        tension: 0,
+        fill: false,
+      });
+    }
+
+    weightChart = new Chart(ctx, {
+      type: 'line',
+      data: { labels, datasets },
+      options: {
+        responsive: true,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { position: 'top', labels: { boxWidth: 14, font: { size: 12 } } },
+          tooltip: { callbacks: {
+            label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y} ${unit}`
+          }}
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { font: { size: 11 }, maxTicksLimit: 10 } },
+          y: {
+            grid: { color: '#f0f0f0' },
+            ticks: { font: { size: 11 }, callback: v => v + ' ' + unit },
+            suggestedMin: targetVal
+              ? Math.min(...vals, targetVal) - 2
+              : Math.min(...vals) - 2,
+            suggestedMax: targetVal
+              ? Math.max(...vals, targetVal) + 2
+              : Math.max(...vals) + 2,
+          }
+        }
+      }
+    });
+  }
+
+  document.getElementById('btn-log-weight').addEventListener('click', function() {
+    const raw = parseFloat(document.getElementById('wt-input').value);
+    if (!raw || raw < 20) { alert('Please enter a valid weight.'); return; }
+
+    const weightLog = load('weightLog', []);
+    const today     = TODAY; // already defined at top
+
+    // Replace today's entry if it already exists, otherwise append
+    const existIdx = weightLog.findIndex(e => e.date === today);
+    if (existIdx >= 0) weightLog[existIdx].val = raw;
+    else               weightLog.push({ date: today, val: raw });
+
+    save('weightLog', weightLog.slice(-90)); // keep max 90 days
+    document.getElementById('wt-input').value = '';
+
+    // Flash button
+    const btn = this;
+    btn.textContent = '✓ Logged!';
+    btn.style.background = '#16a34a';
+    setTimeout(() => { btn.textContent = '+ Log'; btn.style.background = ''; }, 1500);
+
+    renderWeightChart();
+  });
 
   document.getElementById('btn-go-log').addEventListener('click', () => showPage('log'));
 
@@ -1365,12 +1631,12 @@
   ];
 
   // ── Food Log page ──────────────────────────────────────────────────────────
-  document.querySelectorAll('.meal-tab').forEach(tab => {
+  document.querySelectorAll('#meal-tabs .meal-tab').forEach(tab => {
     tab.addEventListener('click', function() {
-      document.querySelectorAll('.meal-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('#meal-tabs .meal-tab').forEach(t => t.classList.remove('active'));
       this.classList.add('active');
       selectedMeal = this.dataset.meal;
-      document.getElementById('search-results').style.display = 'none';
+      suggestDropEl.style.display = 'none';
       document.getElementById('add-modal').style.display = 'none';
     });
   });
@@ -1628,9 +1894,11 @@
     document.getElementById('p-weight').value   = profile.weight;
     document.getElementById('p-height').value   = profile.height;
     document.getElementById('p-activity').value = profile.activity;
+    if (profile.targetWeight) document.getElementById('p-target-weight').value = profile.targetWeight;
     const imp = (profile.unit || '').startsWith('Imperial');
-    document.getElementById('unit-w').textContent = imp ? '(lb)' : '(kg)';
-    document.getElementById('unit-h').textContent = imp ? '(in)' : '(cm)';
+    document.getElementById('unit-w').textContent  = imp ? '(lb)' : '(kg)';
+    document.getElementById('unit-h').textContent  = imp ? '(in)' : '(cm)';
+    document.getElementById('unit-tw').textContent = imp ? '(lb)' : '(kg)';
   }
   document.getElementById('m-protein').value = goals.protein;
   document.getElementById('m-carbs').value   = goals.carbs;
