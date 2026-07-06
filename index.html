@@ -122,6 +122,14 @@
     border: 1px solid #d1d5db;
     color: #0F2922;
   }
+  .btn-reset {
+    background: transparent;
+    border: 1px solid #fca5a5;
+    color: #b91c1c;
+    font-size: 13px;
+    padding: 8px 16px;
+  }
+  .btn-reset:hover { background: #fef2f2; opacity: 1; }
   .btn-full { width: 100%; }
 
   /* ── Goal selector ── */
@@ -479,7 +487,8 @@
         </div>
       </div>
       <hr class="divider" />
-      <div style="display:flex;justify-content:flex-end">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <button class="btn btn-reset" id="btn-reset-data">Reset All Data</button>
         <button class="btn btn-primary" id="btn-next-goals">Save &amp; Continue →</button>
       </div>
     </div>
@@ -618,10 +627,15 @@
       </div>
     </div>
 
-    <!-- Daily History Card -->
-    <div class="card" id="history-card" style="display:none">
-      <h2><span class="icon">📆</span> Past Days</h2>
-      <div id="history-body"></div>
+    <!-- Analytics Card -->
+    <div class="card" id="analytics-card" style="display:none">
+      <h2><span class="icon">📊</span> Nutrition Analytics</h2>
+      <div style="display:flex;gap:6px;margin-bottom:18px">
+        <button class="meal-tab active" id="tab-daily"   data-period="daily">Today</button>
+        <button class="meal-tab"        id="tab-weekly"  data-period="weekly">Last 7 Days</button>
+        <button class="meal-tab"        id="tab-monthly" data-period="monthly">Last 30 Days</button>
+      </div>
+      <div id="analytics-body"></div>
     </div>
 
     <div class="card" id="today-card">
@@ -1138,32 +1152,114 @@
     document.getElementById('bmi-marker').style.left = pct + '%';
   }
 
-  // ── Daily History helper ────────────────────────────────────────────────────
-  function renderHistory() {
+  // ── Analytics helpers ──────────────────────────────────────────────────────
+  let analyticsPeriod = 'daily';
+
+  function getAnalyticsData(period) {
+    // Build a unified all-entries array from history + today's live log
+    const history = load('dailyHistory', []); // [{ date, kcal, protein, carbs, fat, target }]
+    const now = new Date();
+
+    // Aggregate today from live foodLog
+    const todayEntry = foodLog.length ? {
+      date:    TODAY,
+      kcal:    Math.round(foodLog.reduce((s,e) => s + e.cals,    0)),
+      protein: Math.round(foodLog.reduce((s,e) => s + e.protein, 0)),
+      carbs:   Math.round(foodLog.reduce((s,e) => s + e.carbs,   0)),
+      fat:     Math.round(foodLog.reduce((s,e) => s + e.fat,     0)),
+      target:  calc ? calc.target : 0,
+    } : null;
+
+    const allDays = todayEntry ? [todayEntry, ...history] : history;
+
+    const cutoff = new Date(now);
+    if (period === 'daily')   cutoff.setDate(cutoff.getDate() - 1);
+    else if (period === 'weekly')  cutoff.setDate(cutoff.getDate() - 7);
+    else                           cutoff.setDate(cutoff.getDate() - 30);
+
+    return allDays.filter(d => new Date(d.date + 'T12:00:00') >= cutoff);
+  }
+
+  function renderAnalytics() {
+    const card = document.getElementById('analytics-card');
+    const body = document.getElementById('analytics-body');
     const history = load('dailyHistory', []);
-    const card    = document.getElementById('history-card');
-    const body    = document.getElementById('history-body');
-    if (!history.length) { card.style.display = 'none'; return; }
+
+    // Show card only if there's any data (today or history)
+    if (!foodLog.length && !history.length) { card.style.display = 'none'; return; }
     card.style.display = '';
+
+    const days   = getAnalyticsData(analyticsPeriod);
     const target = calc ? calc.target : 0;
-    body.innerHTML = history.slice(0, 7).map(day => {
-      const pct  = target ? Math.min(Math.round(day.kcal / target * 100), 200) : null;
+
+    if (!days.length) {
+      body.innerHTML = `<p style="font-size:13px;color:#6b8f82;text-align:center;padding:20px 0">No data for this period yet.</p>`;
+      return;
+    }
+
+    const totKcal   = days.reduce((s,d) => s + d.kcal,    0);
+    const totProt   = days.reduce((s,d) => s + d.protein,  0);
+    const totCarb   = days.reduce((s,d) => s + d.carbs,    0);
+    const totFat    = days.reduce((s,d) => s + d.fat,      0);
+    const avgKcal   = Math.round(totKcal  / days.length);
+    const avgProt   = Math.round(totProt  / days.length);
+    const avgCarb   = Math.round(totCarb  / days.length);
+    const avgFat    = Math.round(totFat   / days.length);
+    const daysLabel = analyticsPeriod === 'daily' ? 'Today' : `${days.length} day${days.length > 1 ? 's' : ''}`;
+
+    // Summary boxes
+    const summaryHTML = `
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px">
+        <div style="background:#f7f8fa;border:1px solid #e5e7eb;border-radius:10px;padding:12px;text-align:center">
+          <div style="font-size:20px;font-weight:800;color:#10B981">${avgKcal.toLocaleString()}</div>
+          <div style="font-size:10px;color:#57606a;font-weight:600;text-transform:uppercase;margin-top:2px">Avg kcal/day</div>
+        </div>
+        <div style="background:#f7f8fa;border:1px solid #e5e7eb;border-radius:10px;padding:12px;text-align:center">
+          <div style="font-size:20px;font-weight:800;color:#10B981">${avgProt}g</div>
+          <div style="font-size:10px;color:#57606a;font-weight:600;text-transform:uppercase;margin-top:2px">Avg Protein</div>
+        </div>
+        <div style="background:#f7f8fa;border:1px solid #e5e7eb;border-radius:10px;padding:12px;text-align:center">
+          <div style="font-size:20px;font-weight:800;color:#d97706">${avgCarb}g</div>
+          <div style="font-size:10px;color:#57606a;font-weight:600;text-transform:uppercase;margin-top:2px">Avg Carbs</div>
+        </div>
+        <div style="background:#f7f8fa;border:1px solid #e5e7eb;border-radius:10px;padding:12px;text-align:center">
+          <div style="font-size:20px;font-weight:800;color:#7c5cd8">${avgFat}g</div>
+          <div style="font-size:10px;color:#57606a;font-weight:600;text-transform:uppercase;margin-top:2px">Avg Fat</div>
+        </div>
+      </div>
+      <div style="font-size:11px;color:#57606a;text-align:right;margin-bottom:12px">Total over ${daysLabel}: <strong>${totKcal.toLocaleString()} kcal</strong></div>`;
+
+    // Per-day bars (show max 7 most recent)
+    const barsHTML = days.slice(0, 7).map(day => {
       const over = target && day.kcal > target;
       const barColor = over ? '#dc2626' : '#10B981';
-      const barW = target ? Math.min(day.kcal / target * 100, 100) + '%' : '0%';
+      const barW = target ? Math.min(day.kcal / target * 100, 100) + '%' : '60%';
+      const pct  = target ? Math.round(day.kcal / target * 100) : null;
       const dateLabel = new Date(day.date + 'T12:00:00').toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' });
-      return `<div style="margin-bottom:14px">
-        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+      return `<div style="margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
           <span style="font-weight:600;color:#0F2922">${dateLabel}</span>
           <span style="color:${barColor};font-weight:700">${day.kcal.toLocaleString()} kcal${pct !== null ? ' · ' + pct + '%' : ''}</span>
         </div>
-        <div style="height:8px;background:#e5e7eb;border-radius:99px;overflow:hidden">
-          <div style="height:100%;width:${barW};background:${barColor};border-radius:99px;transition:width 0.4s"></div>
+        <div style="height:7px;background:#e5e7eb;border-radius:99px;overflow:hidden">
+          <div style="height:100%;width:${barW};background:${barColor};border-radius:99px"></div>
         </div>
-        <div style="font-size:11px;color:#57606a;margin-top:3px">P: ${day.protein}g &nbsp; C: ${day.carbs}g &nbsp; F: ${day.fat}g</div>
+        <div style="font-size:10px;color:#57606a;margin-top:2px">P: ${day.protein}g · C: ${day.carbs}g · F: ${day.fat}g</div>
       </div>`;
     }).join('');
+
+    body.innerHTML = summaryHTML + barsHTML;
   }
+
+  // Tab switching for analytics
+  document.querySelectorAll('#analytics-card .meal-tab').forEach(tab => {
+    tab.addEventListener('click', function() {
+      document.querySelectorAll('#analytics-card .meal-tab').forEach(t => t.classList.remove('active'));
+      this.classList.add('active');
+      analyticsPeriod = this.dataset.period;
+      renderAnalytics();
+    });
+  });
 
   // ── Dashboard ──────────────────────────────────────────────────────────────
   function renderDashboard() {
@@ -1184,7 +1280,7 @@
     }
 
     renderBMI();
-    renderHistory();
+    renderAnalytics();
 
     // Today progress
     const now = new Date();
@@ -1884,6 +1980,13 @@
       `<span>Carbs: <strong>${Math.round(totCarb)}g</strong></span>` +
       `<span>Fat: <strong>${Math.round(totFat)}g</strong></span>`;
   }
+
+  // ── Reset All Data ─────────────────────────────────────────────────────────
+  document.getElementById('btn-reset-data').addEventListener('click', function() {
+    if (!confirm('Are you sure you want to clear all your tracking and weight history? This cannot be undone.')) return;
+    localStorage.clear();
+    location.reload();
+  });
 
   // ── Restore UI from saved state on page load ───────────────────────────────
   if (profile.name) {
